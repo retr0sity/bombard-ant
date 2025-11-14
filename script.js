@@ -165,8 +165,8 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getNestCount() {
-    return parseInt(nestCountInput.value) || Math.min(8, nests.length);
-  }
+    return parseInt(nestCountInput.value) || nests.length;  // Use all nests by default
+}
 
   // Update UI elements to match Python defaults
   function initializeUIWithPythonDefaults() {
