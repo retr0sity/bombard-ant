@@ -1,44 +1,55 @@
 // script.js
 // Port of bombard-ant.py algorithm to JavaScript
-// Keeps logic faithful to the Python file you provided.
+// Fixed version with corrected calculateKills method
 
-(() => {
+// Wait for the DOM to be fully loaded
+document.addEventListener('DOMContentLoaded', function() {
+  
   // Canvas & UI
   const canvas = document.getElementById('canvas');
+  if (!canvas) {
+    console.error('Canvas element not found!');
+    return;
+  }
+  
   const ctx = canvas.getContext('2d');
   canvas.width = 800;
   canvas.height = 600;
 
-  // UI elements (some exist in your HTML)
+  // UI elements - with null checks
   const popSizeInput = document.getElementById('popSize');
   const mutationInput = document.getElementById('mutation');
   const crossoverInput = document.getElementById('crossover');
   const radiusInput = document.getElementById('radius');
+  const bombCountInput = document.getElementById('bombCount');
+  const nestCountInput = document.getElementById('nestCount');
   const generationLabel = document.getElementById('generation');
   const bestFitnessLabel = document.getElementById('bestFitness');
   const totalAntsLabel = document.getElementById('totalAnts');
   const killRateLabel = document.getElementById('killRate');
 
-  // Default constants (match your Python defaults)
+  // Default constants - MATCHING PYTHON SCRIPT
   const DEFAULT_POPULATION_SIZE = 50;
   const DEFAULT_MAX_GENERATIONS = 100;
-  const DEFAULT_CROSSOVER_RATE = 0.8; // as fraction
-  const DEFAULT_MUTATION_RATE = 0.02; // as fraction
-  const DEFAULT_BOMB_RADIUS = 10.0; // in python units (0-100 grid)
+  const DEFAULT_CROSSOVER_RATE = 0.8;    // 80% in Python
+  const DEFAULT_MUTATION_RATE = 0.02;    // 2% in Python
+  const DEFAULT_BOMB_RADIUS = 10.0;      // 10.0 in Python
+  const DEFAULT_BOMB_COUNT = 3;          // 3 bombs in Python
 
-  // We'll run algorithm on a 0..100 logical grid (same as Python), then scale to canvas for drawing.
+  // Grid dimensions
   const GRID_W = 100;
   const GRID_H = 100;
 
-  // Utility: scale functions between logical grid (0..100) and canvas pixels
+  // Utility functions
   function scaleX(x) {
     return (x / GRID_W) * canvas.width;
   }
+  
   function scaleY(y) {
     return (y / GRID_H) * canvas.height;
   }
 
-  // --- Data structures mirroring the Python code ---
+  // --- Data structures ---
   class Point {
     constructor(x, y, amount_of_ants = 0) {
       this.x = x;
@@ -48,9 +59,8 @@
   }
 
   class Chromosome {
-    // bombs: array of Point (x,y,amount)
     constructor(bombs) {
-      this.bombs = bombs.map(b => new Point(b.x, b.y, b.amount_of_ants || 0));
+      this.bombs = bombs.map(b => new Point(b.x, b.y));
       this.fitness = 0;
       this.calculateFitness();
     }
@@ -61,9 +71,8 @@
       return Math.sqrt(dx * dx + dy * dy);
     }
 
-    // replicate Python calculateKills(ants, distance)
     calculateKills(ants, distance) {
-      // compute dmax (max distance between any two nests) just like Python
+      // FIXED: Calculate dmax correctly across all nests
       let dmax = 0;
       for (let i = 0; i < nests.length; i++) {
         for (let j = i + 1; j < nests.length; j++) {
@@ -71,21 +80,23 @@
           if (d > dmax) dmax = d;
         }
       }
-      // Apply same formula: ants * dmax / 20.0 * distance + 0.00001
-      return ants * dmax / 20.0 * distance + 0.00001;
+      // Apply formula: ants * dmax / 20.0 * distance + 0.00001
+      return ants * (dmax / 20.0) * distance + 0.00001;
     }
 
     calculateFitness() {
       let total_kills = 0.0;
-      // copy remaining ants per nest
       const remaining_ants = nests.map(n => n.amount_of_ants);
+      const radius = getBombRadius();
 
       for (const bomb of this.bombs) {
         for (let i = 0; i < nests.length; i++) {
           const nest = nests[i];
           const distance = this.calculateDistance(nest, bomb);
-          if (distance <= getBombRadius()) {
-            const kills = this.calculateKills(nest.amount_of_ants, distance);
+          
+          if (distance <= radius && remaining_ants[i] > 0) {
+            const kills = this.calculateKills(remaining_ants[i], distance);
+            
             if (kills >= remaining_ants[i]) {
               total_kills += remaining_ants[i];
               remaining_ants[i] = 0;
@@ -101,8 +112,8 @@
     }
   }
 
-  // --- Nests: use the exact array from your Python file ---
-  const nests = [
+  // --- Nests configuration ---
+  let nests = [
     new Point(25, 65, 100),
     new Point(23, 8, 200),
     new Point(7, 13, 327),
@@ -116,7 +127,6 @@
     new Point(84, 4, 945),
     new Point(34, 23, 967)
   ];
-  const num_nests = nests.length;
 
   // Simulation state
   let POPULATION_SIZE = DEFAULT_POPULATION_SIZE;
@@ -124,56 +134,93 @@
   let CROSSOVER_RATE = DEFAULT_CROSSOVER_RATE;
   let MUTATION_RATE = DEFAULT_MUTATION_RATE;
   let BOMB_RADIUS = DEFAULT_BOMB_RADIUS;
-  const BOMBS_PER_CHROMOSOME = 3; // python used exactly 3 bombs per chromosome
+  let BOMBS_PER_CHROMOSOME = DEFAULT_BOMB_COUNT;
 
   let population = [];
   let generation = 0;
   let running = false;
   let bestSolution = null;
   let bestFitness = 0;
+  let simTimer = null;
 
-  // Helpers to read values from UI (if you change sliders)
+  // Configuration getters
   function getPopulationSize() {
-    return parseInt(popSizeInput ? popSizeInput.value : POPULATION_SIZE) || POPULATION_SIZE;
-  }
-  function getMutationRate() {
-    // slider gives 1..50 as percent in your HTML; fall back to default if absent
-    return mutationInput ? (parseInt(mutationInput.value) / 100) : MUTATION_RATE;
-  }
-  function getCrossoverRate() {
-    return crossoverInput ? (parseInt(crossoverInput.value) / 100) : CROSSOVER_RATE;
-  }
-  function getBombRadius() {
-    // HTML radius slider (10..80) maps to python logical units; default 10
-    return radiusInput ? parseInt(radiusInput.value) : BOMB_RADIUS;
+    return parseInt(popSizeInput.value) || POPULATION_SIZE;
   }
 
-  // --- Genetic operators ported from Python ---
+  function getMutationRate() {
+    return (parseInt(mutationInput.value) / 100) || MUTATION_RATE;
+  }
+
+  function getCrossoverRate() {
+    return (parseInt(crossoverInput.value) / 100) || CROSSOVER_RATE;
+  }
+
+  function getBombRadius() {
+    return parseInt(radiusInput.value) || BOMB_RADIUS;
+  }
+
+  function getBombCount() {
+    return parseInt(bombCountInput.value) || BOMBS_PER_CHROMOSOME;
+  }
+
+  function getNestCount() {
+    return parseInt(nestCountInput.value) || Math.min(8, nests.length);
+  }
+
+  // Update UI elements to match Python defaults
+  function initializeUIWithPythonDefaults() {
+    if (popSizeInput) popSizeInput.value = DEFAULT_POPULATION_SIZE;
+    if (mutationInput) mutationInput.value = DEFAULT_MUTATION_RATE * 100; // Convert to percentage
+    if (crossoverInput) crossoverInput.value = DEFAULT_CROSSOVER_RATE * 100; // Convert to percentage
+    if (radiusInput) radiusInput.value = DEFAULT_BOMB_RADIUS;
+    if (bombCountInput) bombCountInput.value = DEFAULT_BOMB_COUNT;
+    
+    // Update the display values
+    updateValue('popSize', DEFAULT_POPULATION_SIZE);
+    updateValue('mutation', DEFAULT_MUTATION_RATE * 100);
+    updateValue('crossover', DEFAULT_CROSSOVER_RATE * 100);
+    updateValue('radius', DEFAULT_BOMB_RADIUS);
+  }
+
+  // Update nests based on nest count
+  function updateNests() {
+    const nestCount = getNestCount();
+    // Use first 'nestCount' nests
+    currentNests = nests.slice(0, nestCount);
+    return currentNests;
+  }
+
+  let currentNests = [];
+
+  // --- Genetic Algorithm Functions ---
   function initializePopulation() {
     population = [];
     POPULATION_SIZE = getPopulationSize();
+    BOMBS_PER_CHROMOSOME = getBombCount();
+    currentNests = updateNests();
+    
     for (let i = 0; i < POPULATION_SIZE; i++) {
       const bombs = [];
       for (let b = 0; b < BOMBS_PER_CHROMOSOME; b++) {
         bombs.push(new Point(
-          Math.floor(Math.random() * (GRID_W + 1)), // 0..100 inclusive
-          Math.floor(Math.random() * (GRID_H + 1)),
-          0
+          Math.random() * GRID_W,
+          Math.random() * GRID_H
         ));
       }
       population.push(new Chromosome(bombs));
     }
-    // set best
+    
     bestSolution = findBestSolution();
     bestFitness = bestSolution ? bestSolution.fitness : 0;
   }
 
   function mutate(chromosome) {
     const mutRate = getMutationRate();
-    for (let i = 0; i < BOMBS_PER_CHROMOSOME; i++) {
+    for (let i = 0; i < chromosome.bombs.length; i++) {
       if (Math.random() < mutRate) {
-        chromosome.bombs[i].x = Math.floor(Math.random() * (GRID_W + 1));
-        chromosome.bombs[i].y = Math.floor(Math.random() * (GRID_H + 1));
+        chromosome.bombs[i].x = Math.random() * GRID_W;
+        chromosome.bombs[i].y = Math.random() * GRID_H;
       }
     }
     chromosome.calculateFitness();
@@ -183,23 +230,23 @@
     const cxRate = getCrossoverRate();
     let child1_bombs = [];
     let child2_bombs = [];
+    
     if (Math.random() < cxRate) {
-      const crossover_point = Math.floor(Math.random() * BOMBS_PER_CHROMOSOME); // 0..2
-      for (let i = 0; i < BOMBS_PER_CHROMOSOME; i++) {
+      const crossover_point = Math.floor(Math.random() * parent1.bombs.length);
+      for (let i = 0; i < parent1.bombs.length; i++) {
         if (i <= crossover_point) {
-          // take from p1 / p2 respectively
-          child1_bombs.push(new Point(parent1.bombs[i].x, parent1.bombs[i].y, parent1.bombs[i].amount_of_ants));
-          child2_bombs.push(new Point(parent2.bombs[i].x, parent2.bombs[i].y, parent2.bombs[i].amount_of_ants));
+          child1_bombs.push(new Point(parent1.bombs[i].x, parent1.bombs[i].y));
+          child2_bombs.push(new Point(parent2.bombs[i].x, parent2.bombs[i].y));
         } else {
-          child1_bombs.push(new Point(parent2.bombs[i].x, parent2.bombs[i].y, parent2.bombs[i].amount_of_ants));
-          child2_bombs.push(new Point(parent1.bombs[i].x, parent1.bombs[i].y, parent1.bombs[i].amount_of_ants));
+          child1_bombs.push(new Point(parent2.bombs[i].x, parent2.bombs[i].y));
+          child2_bombs.push(new Point(parent1.bombs[i].x, parent1.bombs[i].y));
         }
       }
     } else {
-      // no crossover: deep copy parents
-      child1_bombs = parent1.bombs.map(b => new Point(b.x, b.y, b.amount_of_ants));
-      child2_bombs = parent2.bombs.map(b => new Point(b.x, b.y, b.amount_of_ants));
+      child1_bombs = parent1.bombs.map(b => new Point(b.x, b.y));
+      child2_bombs = parent2.bombs.map(b => new Point(b.x, b.y));
     }
+    
     const child1 = new Chromosome(child1_bombs);
     const child2 = new Chromosome(child2_bombs);
     mutate(child1);
@@ -208,9 +255,7 @@
   }
 
   function rouletteWheelSelection(total_fitness) {
-    // returns index of selected parent (mirrors Python)
     if (total_fitness <= 0) {
-      // fallback to random index if all fitness are zero
       return Math.floor(Math.random() * population.length);
     }
     let slice = Math.random() * total_fitness;
@@ -223,68 +268,97 @@
   }
 
   function evolveOnce() {
-    const total_fitness = population.reduce((s, c) => s + c.fitness, 0);
+    const total_fitness = population.reduce((sum, chrom) => sum + chrom.fitness, 0);
     const new_population = [];
-    // iterate in steps of 2
+    
     for (let i = 0; i < POPULATION_SIZE; i += 2) {
       const p1_idx = rouletteWheelSelection(total_fitness);
       const p2_idx = rouletteWheelSelection(total_fitness);
       const [child1, child2] = crossover(population[p1_idx], population[p2_idx]);
       new_population.push(child1);
-      new_population.push(child2);
+      if (new_population.length < POPULATION_SIZE) {
+        new_population.push(child2);
+      }
     }
-    // copy new population into population (Python replaced population)
-    for (let i = 0; i < POPULATION_SIZE; i++) {
-      population[i] = new_population[i];
+    
+    // Ensure we have exactly POPULATION_SIZE individuals
+    while (new_population.length > POPULATION_SIZE) {
+      new_population.pop();
     }
+    
+    population = new_population;
   }
 
   function findBestSolution() {
-    if (!population || population.length === 0) return null;
+    if (!population.length) return null;
     let best = population[0];
     for (let i = 1; i < population.length; i++) {
-      if (population[i].fitness > best.fitness) best = population[i];
+      if (population[i].fitness > best.fitness) {
+        best = population[i];
+      }
     }
     return best;
   }
 
-  // --- Drawing / UI updates ---
+  // --- Drawing Functions ---
   function draw() {
-    // background
+    // Clear canvas
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw nests (scaled)
-    for (const nest of nests) {
-      ctx.fillStyle = '#8b4513';
-      ctx.beginPath();
-      ctx.arc(scaleX(nest.x), scaleY(nest.y), 10, 0, Math.PI * 2);
-      ctx.fill();
-
-      // draw a few sample ants (we won't render all amounts, just a tiny dot to indicate nest)
-      ctx.fillStyle = '#00ff00';
-      ctx.beginPath();
-      ctx.arc(scaleX(nest.x) + 6, scaleY(nest.y) + 6, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Draw best solution bombs
+    // Draw blast radii first (so they appear behind bombs)
     if (bestSolution) {
-      const rad = getBombRadius();
+      const radius = getBombRadius();
+      const scaledRadius = (radius / GRID_W) * canvas.width;
+      
       for (const bomb of bestSolution.bombs) {
-        // blast radius (scaled)
-        ctx.fillStyle = 'rgba(255,68,68,0.12)';
-        ctx.strokeStyle = 'rgba(255,68,68,0.35)';
+        ctx.fillStyle = 'rgba(255, 68, 68, 0.15)';
+        ctx.strokeStyle = 'rgba(255, 68, 68, 0.4)';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(scaleX(bomb.x), scaleY(bomb.y), (rad / GRID_W) * canvas.width, 0, Math.PI * 2);
+        ctx.arc(scaleX(bomb.x), scaleY(bomb.y), scaledRadius, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+      }
+    }
 
-        // bomb core
+    // Draw nests
+    for (const nest of currentNests) {
+      // Nest center
+      ctx.fillStyle = '#8b4513';
+      ctx.beginPath();
+      ctx.arc(scaleX(nest.x), scaleY(nest.y), 8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Ant indicators around nest
+      ctx.fillStyle = '#00ff00';
+      const antCount = Math.min(10, Math.ceil(nest.amount_of_ants / 100));
+      for (let i = 0; i < antCount; i++) {
+        const angle = (i / antCount) * Math.PI * 2;
+        const distance = 15;
+        ctx.beginPath();
+        ctx.arc(
+          scaleX(nest.x) + Math.cos(angle) * distance,
+          scaleY(nest.y) + Math.sin(angle) * distance,
+          2, 0, Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+
+    // Draw bombs on top
+    if (bestSolution) {
+      for (const bomb of bestSolution.bombs) {
+        // Bomb core
         ctx.fillStyle = '#ff4444';
         ctx.beginPath();
         ctx.arc(scaleX(bomb.x), scaleY(bomb.y), 6, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Bomb center
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath();
+        ctx.arc(scaleX(bomb.x), scaleY(bomb.y), 2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -293,65 +367,58 @@
   }
 
   function updateStatsOnPage() {
-    const totalAnts = nests.reduce((s, n) => s + n.amount_of_ants, 0);
+    const totalAnts = currentNests.reduce((sum, nest) => sum + nest.amount_of_ants, 0);
     generationLabel.textContent = generation;
-    bestFitnessLabel.textContent = Math.floor(bestFitness);
+    bestFitnessLabel.textContent = Math.round(bestFitness);
     totalAntsLabel.textContent = totalAnts;
-    const killRate = totalAnts > 0 ? ((bestFitness / totalAnts) * 100).toFixed(1) : '0.0';
-    killRateLabel.textContent = killRate + '%';
+    
+    const killRate = totalAnts > 0 ? ((bestFitness / totalAnts) * 100) : 0;
+    killRateLabel.textContent = killRate.toFixed(1) + '%';
   }
 
-  // --- Simulation control ---
+  // --- Simulation Control ---
   function resetSimulation() {
+    stopSimulation();
     generation = 0;
     bestFitness = 0;
     bestSolution = null;
-    POPULATION_SIZE = getPopulationSize();
     initializePopulation();
     draw();
   }
 
   function stepGeneration() {
-    // evaluate current population fitness already calculated on Chromosome creation/mutation
-    // find best
-    const best = findBestSolution();
-    if (best && best.fitness > bestFitness) {
-      bestFitness = best.fitness;
-      // deep clone best into bestSolution for safe drawing (we only need bombs coords)
-      bestSolution = new Chromosome(best.bombs.map(b => new Point(b.x, b.y, b.amount_of_ants)));
-    } else if (!bestSolution && best) {
-      bestSolution = new Chromosome(best.bombs.map(b => new Point(b.x, b.y, b.amount_of_ants)));
-      bestFitness = best.fitness;
+    // Find best in current population
+    const currentBest = findBestSolution();
+    if (currentBest && currentBest.fitness > bestFitness) {
+      bestFitness = currentBest.fitness;
+      bestSolution = new Chromosome(currentBest.bombs.map(b => new Point(b.x, b.y)));
     }
 
-    // Advance one generation
+    // Evolve to next generation
     evolveOnce();
     generation++;
-    // re-calc fitnesses (children were created and mutated already have fitness computed in constructor/mutate)
-    // update best from new population candidate
+
+    // Check for new best after evolution
     const newBest = findBestSolution();
     if (newBest && newBest.fitness > bestFitness) {
       bestFitness = newBest.fitness;
-      bestSolution = new Chromosome(newBest.bombs.map(b => new Point(b.x, b.y, b.amount_of_ants)));
+      bestSolution = new Chromosome(newBest.bombs.map(b => new Point(b.x, b.y)));
     }
 
     draw();
   }
 
-  let simTimer = null;
   function startSimulation() {
     if (running) return;
     running = true;
-    // read MAX_GENERATIONS from default constant in Python
-    const maxGen = DEFAULT_MAX_GENERATIONS;
+    
     function loop() {
-      if (!running) return;
-      if (generation >= maxGen) {
+      if (!running || generation >= MAX_GENERATIONS) {
         running = false;
         return;
       }
       stepGeneration();
-      simTimer = setTimeout(loop, 100); // matches your original pacing
+      simTimer = setTimeout(loop, 50);
     }
     loop();
   }
@@ -364,23 +431,39 @@
     }
   }
 
-  // --- Public function bindings for HTML buttons (they exist in your index.html) ---
-  window.startSimulation = () => {
-    // ensure population size sync
-    POPULATION_SIZE = getPopulationSize();
-    if (!population || population.length !== POPULATION_SIZE) resetSimulation();
-    startSimulation();
-  };
-  window.stopSimulation = () => stopSimulation();
-  window.resetSimulation = () => {
-    stopSimulation();
-    resetSimulation();
-  };
+  // --- UI Update Functions ---
+  function updateValue(elementId, value) {
+    const displayElement = document.getElementById(elementId + 'Value');
+    if (displayElement) {
+      if (elementId === 'mutation' || elementId === 'crossover') {
+        displayElement.textContent = value + '%';
+      } else {
+        displayElement.textContent = value;
+      }
+    }
+    
+    // Reset simulation if parameters change during runtime
+    if (running) {
+      resetSimulation();
+    }
+  }
 
-  // initialize on load
+  // --- Global Function Bindings ---
+  window.startSimulation = startSimulation;
+  window.stopSimulation = stopSimulation;
+  window.resetSimulation = resetSimulation;
+  window.updateValue = updateValue;
+
+  // Initialize event listeners for number inputs
+  if (bombCountInput) {
+    bombCountInput.addEventListener('change', resetSimulation);
+  }
+  if (nestCountInput) {
+    nestCountInput.addEventListener('change', resetSimulation);
+  }
+
+  // Initialize UI with Python defaults and start simulation
+  initializeUIWithPythonDefaults();
   resetSimulation();
 
-  // initial draw
-  draw();
-
-})();
+});
